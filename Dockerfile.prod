@@ -8,7 +8,8 @@ WORKDIR /build
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install -r requirements.txt \
+ && find /opt/venv \( -type d -name tests -o -type d -name __pycache__ \) -prune -exec rm -rf {} +
 COPY train.py .
 RUN python train.py --version 1.0.0 --out /build/models/model.joblib
 
@@ -18,6 +19,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     MODEL_PATH=/app/models/model.joblib
+# Apply Debian security updates that have a fix available (Trivy findings)
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system app && useradd --system --gid app --no-create-home app
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
