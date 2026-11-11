@@ -57,3 +57,17 @@ def test_wrong_api_key_is_403(client):
 def test_health_and_docs_need_no_key(client):
     assert client.get("/health").status_code == 200
     assert client.get("/openapi.json").status_code == 200
+
+
+def test_borrower_applications_lists_only_that_borrower(client):
+    client.post("/api/v1/applications", json={**GOOD, "borrower_id": 1042}, headers=AUTH)
+    client.post("/api/v1/applications", json={**GOOD, "borrower_id": 7}, headers=AUTH)
+    body = client.get("/api/v1/borrowers/1042/applications", headers=AUTH).json()
+    assert [a["borrower_id"] for a in body] == [1042]
+
+
+def test_openapi_documents_auth_errors(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    responses = paths["/api/v1/predictions"]["post"]["responses"]
+    assert {"401", "403"} <= set(responses)
+

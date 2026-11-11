@@ -57,6 +57,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Loan Application Service", version="1.0.0", lifespan=lifespan)
 
+# Error responses documented in /openapi.json, matching the Module 2 contract
+AUTH_ERRORS = {401: {"description": "Missing API key"}, 403: {"description": "Invalid API key"}}
+NOT_FOUND = {404: {"description": "Resource not found"}}
+
 
 def score(features: LoanFeatures) -> Prediction:
     X = pd.DataFrame([features.model_dump()])[ml["features"]]
@@ -73,12 +77,12 @@ def health():
     return body
 
 
-@app.post("/api/v1/predictions", response_model=Prediction, dependencies=[Depends(require_api_key)])
+@app.post("/api/v1/predictions", response_model=Prediction, dependencies=[Depends(require_api_key)], responses=AUTH_ERRORS)
 def predict(features: LoanFeatures):
     return score(features)
 
 
-@app.post("/api/v1/applications", response_model=Application, status_code=201, dependencies=[Depends(require_api_key)])
+@app.post("/api/v1/applications", response_model=Application, status_code=201, dependencies=[Depends(require_api_key)], responses=AUTH_ERRORS)
 def create_application(body: ApplicationCreate):
     new = Application(id=7781 + len(APPLICATIONS), status="pending",
                       prediction=score(body), **body.model_dump())
@@ -86,13 +90,21 @@ def create_application(body: ApplicationCreate):
     return new
 
 
-@app.get("/api/v1/applications", response_model=list[Application], dependencies=[Depends(require_api_key)])
+@app.get("/api/v1/applications", response_model=list[Application], dependencies=[Depends(require_api_key)], responses=AUTH_ERRORS)
 def list_applications():
     return list(APPLICATIONS.values())
 
 
-@app.get("/api/v1/applications/{application_id}", response_model=Application, dependencies=[Depends(require_api_key)])
+@app.get("/api/v1/applications/{application_id}", response_model=Application, dependencies=[Depends(require_api_key)],
+         responses={**AUTH_ERRORS, **NOT_FOUND})
 def get_application(application_id: int):
     if application_id not in APPLICATIONS:
         raise HTTPException(status_code=404, detail=f"Application {application_id} not found")
     return APPLICATIONS[application_id]
+
+
+@app.get("/api/v1/borrowers/{borrower_id}/applications", response_model=list[Application],
+         dependencies=[Depends(require_api_key)], responses=AUTH_ERRORS)
+def list_borrower_applications(borrower_id: int):
+    """All applications that belong to one borrower (the nested list from the Module 2 contract)."""
+    return [a for a in APPLICATIONS.values() if a.borrower_id == borrower_id]
