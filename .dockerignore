@@ -1,0 +1,19 @@
+# Keep the build context small and free of secrets
+.git
+.gitignore
+.devcontainer
+.vscode
+.venv
+venv
+__pycache__/
+*.pyc
+.pytest_cache
+*.md
+.env
+.env.*
+compose.yaml
+init.sql
+Dockerfile*
+.dockerignore
+models/
+*.joblib
