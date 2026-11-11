@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi.security import APIKeyHeader
 
 from schemas import Application, ApplicationCreate, LoanFeatures, Prediction
 
@@ -15,6 +16,20 @@ MODEL_PATH = os.getenv("MODEL_PATH")  # optional: load a local joblib file inste
 FEATURES = ["amount_usd", "term_months", "monthly_income_usd", "previous_loans", "late_payments"]
 ml = {}            # filled at start-up: {"model": ..., "version": ..., "features": [...], "source": ...}
 APPLICATIONS = {}  # in-memory store; resets when the server restarts
+GIT_SHA = os.getenv("GIT_SHA", "dev")  # stamped into the image at build time by the pipeline
+
+# --- API key (Lesson 6.6): the key lives only in an environment variable (Render / GitHub secret) ---
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def require_api_key(key: str | None = Security(api_key_header)) -> None:
+    expected = os.getenv("API_KEY")
+    if not expected:  # fail closed: never run unprotected because a variable is missing
+        raise HTTPException(status_code=503, detail="API key not configured")
+    if key is None:
+        raise HTTPException(status_code=401, detail="Missing API key")
+    if key != expected:
+        raise HTTPException(status_code=403, detail="Invalid API key")
 
 
 def load_from_registry(uri: str) -> dict:
@@ -52,18 +67,18 @@ def score(features: LoanFeatures) -> Prediction:
 
 @app.get("/health")
 def health():
-    body = {"status": "ok", "model_version": ml.get("version")}
+    body = {"status": "ok", "model_version": ml.get("version"), "git_sha": GIT_SHA}
     if ml.get("registry_version"):  # loaded from the registry: show which version the alias points to
         body.update(registry_version=ml["registry_version"], model_source=ml["source"])
     return body
 
 
-@app.post("/api/v1/predictions", response_model=Prediction)
+@app.post("/api/v1/predictions", response_model=Prediction, dependencies=[Depends(require_api_key)])
 def predict(features: LoanFeatures):
     return score(features)
 
 
-@app.post("/api/v1/applications", response_model=Application, status_code=201)
+@app.post("/api/v1/applications", response_model=Application, status_code=201, dependencies=[Depends(require_api_key)])
 def create_application(body: ApplicationCreate):
     new = Application(id=7781 + len(APPLICATIONS), status="pending",
                       prediction=score(body), **body.model_dump())
@@ -71,12 +86,12 @@ def create_application(body: ApplicationCreate):
     return new
 
 
-@app.get("/api/v1/applications", response_model=list[Application])
+@app.get("/api/v1/applications", response_model=list[Application], dependencies=[Depends(require_api_key)])
 def list_applications():
     return list(APPLICATIONS.values())
 
 
-@app.get("/api/v1/applications/{application_id}", response_model=Application)
+@app.get("/api/v1/applications/{application_id}", response_model=Application, dependencies=[Depends(require_api_key)])
 def get_application(application_id: int):
     if application_id not in APPLICATIONS:
         raise HTTPException(status_code=404, detail=f"Application {application_id} not found")
