@@ -71,3 +71,10 @@ def test_openapi_documents_auth_errors(client):
     responses = paths["/api/v1/predictions"]["post"]["responses"]
     assert {"401", "403"} <= set(responses)
 
+
+
+def test_score_is_not_inverted(client):
+    """Regression: a release once returned 1 - p, and the bounds test could not see it."""
+    body = client.post("/api/v1/predictions", json=GOOD, headers=AUTH).json()
+    assert abs(body["default_probability"] - 0.095) < 0.01
+    assert body["risk_band"] == "low"
