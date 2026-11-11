@@ -1,0 +1,90 @@
+=============== 4. MLflow scoring server (port 5001) ===============
+
+$ curl -s -w '\nHTTP %{http_code}\n' http://127.0.0.1:5001/ping
+
+
+HTTP 200
+
+
+$ curl -s -w '\nHTTP %{http_code}\n' -X POST http://127.0.0.1:5001/invocations -H 'Content-Type: application/json' -d '{"dataframe_records":[{"amount_usd":1500,"term_months":12,"monthly_income_usd":350.0,"previous_loans":1,"late_payments":0}]}'
+{"predictions": [[0.9136942748942402, 0.08630572510575982]]}
+HTTP 200
+
+--- signature rejection 1: text where an integer is expected
+
+$ curl -s -w '\nHTTP %{http_code}\n' -X POST http://127.0.0.1:5001/invocations -H 'Content-Type: application/json' -d '{"dataframe_records":[{"amount_usd":"lots","term_months":12,"monthly_income_usd":350.0,"previous_loans":1,"late_payments":0}]}'
+{"error_code": "BAD_REQUEST", "message": "Invalid input. Data is not compatible with model signature. Failed to convert column amount_usd to type 'int64'. Error: 'ValueError(\"invalid literal for int() with base 10: 'lots'\")'", "sqlstate": "KAM00", "error_class": "INVALID_PARAMETER_VALUE"}
+HTTP 400
+
+--- signature rejection 2: a required column is missing
+
+$ curl -s -w '\nHTTP %{http_code}\n' -X POST http://127.0.0.1:5001/invocations -H 'Content-Type: application/json' -d '{"dataframe_records":[{"amount_usd":1500,"term_months":12,"previous_loans":1,"late_payments":0}]}'
+{"error_code": "INVALID_PARAMETER_VALUE", "message": "Failed to predict data '   amount_usd  term_months  previous_loans  late_payments\n0        1500           12               1              0'. \nError: Failed to enforce schema of data '   amount_usd  term_months  previous_loans  late_payments\n0        1500           12               1              0' with schema '['amount_usd': long (required), 'term_months': long (required), 'monthly_income_usd': double (required), 'previous_loans': long (required), 'late_payments': long (required)]'. Error: Model is missing inputs ['monthly_income_usd'].", "sqlstate": "KAM01", "error_class": "SCHEMA_ENFORCEMENT_FAILED"}
+HTTP 400
+
+=============== 5. FastAPI loads @champion; same probability as MLflow ===============
+
+$ grep -n 'MODEL_URI' main.py
+13:MODEL_URI = os.getenv("MODEL_URI", "models:/loan-default@champion")
+38:        ml.update(load_from_registry(MODEL_URI))
+
+
+$ curl -s http://127.0.0.1:8000/health
+{"status":"ok","model_version":"loan-default v1 (@champion)","registry_version":"1","model_source":"models:/loan-default@champion"}
+
+$ curl -s -X POST http://127.0.0.1:8000/api/v1/predictions -H 'Content-Type: application/json' -d '{"amount_usd":1500,"term_months":12,"monthly_income_usd":350.0,"previous_loans":1,"late_payments":0}'
+{"default_probability":0.086,"risk_band":"low","model_version":"loan-default v1 (@champion)"}
+--- comparison (same applicant):
+MLflow scoring server P(default) = 0.086
+FastAPI default_probability     = 0.086
+MATCH
+
+=============== 6. Fourteen-day drift run ===============
+
+$ python monitor.py
+Reference flagged share: 27.0%
+ day  psi_amount_usd  psi_monthly_income_usd  flag_rate  max_psi status
+   1           0.030                   0.027      0.280    0.030     ok
+   2           0.030                   0.037      0.242    0.037     ok
+   3           0.014                   0.036      0.272    0.036     ok
+   4           0.037                   0.018      0.305    0.037     ok
+   5           0.025                   0.048      0.258    0.048     ok
+   6           0.038                   0.013      0.242    0.038     ok
+   7           0.042                   0.014      0.262    0.042     ok
+   8           0.036                   0.048      0.288    0.048     ok
+   9           0.099                   0.184      0.315    0.184   WARN
+  10           0.145                   0.322      0.340    0.322  ALERT
+  11           0.163                   0.275      0.315    0.275  ALERT
+  12           0.301                   1.000      0.368    1.000  ALERT
+  13           0.346                   1.554      0.422    1.554  ALERT
+  14           0.412                   2.357      0.448    2.357  ALERT
+Saved drift_chart.png and drift_report.csv
+
+=============== 7. Rollback ===============
+--- BEFORE
+
+$ curl -s http://127.0.0.1:8000/health
+{"status":"ok","model_version":"loan-default v1 (@champion)","registry_version":"1","model_source":"models:/loan-default@champion"}
+
+$ python set_champion.py 2
+@champion: version 1 -> version 2
+
+>>> Now restart FastAPI (Ctrl+C in its terminal, then run it again), then press Enter here... --- AFTER ROLLBACK (champion -> version 2)
+
+$ curl -s http://127.0.0.1:8000/health
+{"status":"ok","model_version":"loan-default v2 (@champion)","registry_version":"2","model_source":"models:/loan-default@champion"}
+
+$ curl -s -X POST http://127.0.0.1:8000/api/v1/predictions -H 'Content-Type: application/json' -d '{"amount_usd":1500,"term_months":12,"monthly_income_usd":350.0,"previous_loans":1,"late_payments":0}'
+{"default_probability":0.172,"risk_band":"low","model_version":"loan-default v2 (@champion)"}
+
+$ python set_champion.py 1
+@champion: version 2 -> version 1
+
+>>> Restart FastAPI again, then press Enter here... --- RESTORED (champion -> version 1)
+
+$ curl -s http://127.0.0.1:8000/health
+{"status":"ok","model_version":"loan-default v1 (@champion)","registry_version":"1","model_source":"models:/loan-default@champion"}
+
+$ curl -s -X POST http://127.0.0.1:8000/api/v1/predictions -H 'Content-Type: application/json' -d '{"amount_usd":1500,"term_months":12,"monthly_income_usd":350.0,"previous_loans":1,"late_payments":0}'
+{"default_probability":0.086,"risk_band":"low","model_version":"loan-default v1 (@champion)"}
+Done.

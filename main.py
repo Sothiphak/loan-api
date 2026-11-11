@@ -8,14 +8,34 @@ from fastapi import FastAPI, HTTPException
 
 from schemas import Application, ApplicationCreate, LoanFeatures, Prediction
 
-MODEL_PATH = os.getenv("MODEL_PATH", "model.joblib")  # where the trained model file lives
-ml = {}            # filled at start-up: {"model": ..., "version": ..., "features": [...]}
+# The model is loaded from the MLflow Model Registry BY ALIAS, so promoting or rolling back a model
+# only means moving the alias and restarting - no code change, no file path, no version number.
+MODEL_URI = os.getenv("MODEL_URI", "models:/loan-default@champion")
+MODEL_PATH = os.getenv("MODEL_PATH")  # optional: load a local joblib file instead (Docker image from Module 4, tests)
+FEATURES = ["amount_usd", "term_months", "monthly_income_usd", "previous_loans", "late_payments"]
+ml = {}            # filled at start-up: {"model": ..., "version": ..., "features": [...], "source": ...}
 APPLICATIONS = {}  # in-memory store; resets when the server restarts
+
+
+def load_from_registry(uri: str) -> dict:
+    """Load models:/<name>@<alias> and look up which registry version the alias points to."""
+    import mlflow  # imported here so the Module 4 Docker image (MODEL_PATH) does not need MLflow
+    import mlflow.sklearn
+
+    name, alias = uri.removeprefix("models:/").split("@")
+    version = mlflow.MlflowClient().get_model_version_by_alias(name, alias)
+    return {"model": mlflow.sklearn.load_model(uri), "features": FEATURES,
+            "version": f"{name} v{version.version} (@{alias})", "registry_version": version.version,
+            "source": uri}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    ml.update(joblib.load(MODEL_PATH))  # load the model once, when the server starts
+    # load the model once, when the server starts
+    if MODEL_PATH:
+        ml.update(joblib.load(MODEL_PATH), source=MODEL_PATH)
+    else:
+        ml.update(load_from_registry(MODEL_URI))
     yield
     ml.clear()
 
@@ -32,7 +52,10 @@ def score(features: LoanFeatures) -> Prediction:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_version": ml.get("version")}
+    body = {"status": "ok", "model_version": ml.get("version")}
+    if ml.get("registry_version"):  # loaded from the registry: show which version the alias points to
+        body.update(registry_version=ml["registry_version"], model_source=ml["source"])
+    return body
 
 
 @app.post("/api/v1/predictions", response_model=Prediction)

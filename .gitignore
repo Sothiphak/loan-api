@@ -4,3 +4,7 @@ __pycache__/
 .pytest_cache/
 model.joblib
 models/
+# MLflow local store (runs, registry and model artifacts)
+mlflow.db
+mlartifacts/
+mlruns/
