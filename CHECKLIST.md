@@ -245,3 +245,40 @@ $ curl -s -X POST http://localhost:8000/api/v1/predictions -H 'Content-Type: app
 ```
 
 The full raw output of every command is in `evidence.txt`, produced by `bash prove.sh 2>&1 | tee evidence.txt`.
+
+---
+
+## Published image (Docker Hub)
+
+Repository: **https://hub.docker.com/r/thiphak/loan-api**, tags **`1.0.0`** and **`latest`** (same digest).
+
+```console
+$ docker login
+Login Succeeded
+
+$ docker tag loan-api:1.0.0 thiphak/loan-api:1.0.0
+$ docker tag loan-api:1.0.0 thiphak/loan-api:latest
+$ docker push thiphak/loan-api:1.0.0
+1.0.0: digest: sha256:a3cb39b27cffbd88abbc3f3f6372502c1b0661a9e944185a3191cf3b33703386 size: 856
+$ docker push thiphak/loan-api:latest
+latest: digest: sha256:a3cb39b27cffbd88abbc3f3f6372502c1b0661a9e944185a3191cf3b33703386 size: 856
+```
+
+### Pull and run from the registry
+
+```console
+$ docker compose down
+$ docker rmi loan-api:1.0.0 thiphak/loan-api:1.0.0 thiphak/loan-api:latest
+$ docker run --rm -p 8000:8000 thiphak/loan-api:1.0.0
+Unable to find image 'thiphak/loan-api:1.0.0' locally
+1.0.0: Pulling from thiphak/loan-api
+...
+```
+
+`POST /api/v1/predictions` from `/docs` returned **200**:
+
+```json
+{"default_probability": 0.095, "risk_band": "low", "model_version": "1.0.0"}
+```
+
+![/docs showing the 200 prediction response from the pulled image](step4-docs-200.png)
